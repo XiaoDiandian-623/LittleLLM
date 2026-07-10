@@ -1,8 +1,11 @@
 #include "kllm/model/weights.h"
 
+#include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <vector>
+
+#include "kllm/base/half.h"
 
 namespace kllm {
 
@@ -88,14 +91,72 @@ ModelWeights ModelWeights::load(const std::string& path, DeviceType device) {
       shape[d] = read_pod<std::int64_t>(in);
     }
     const auto bytes = read_pod<std::uint64_t>(in);
-    Tensor tensor(shape, dtype, device);
-    if (bytes != tensor.nbytes()) {
-      throw std::runtime_error("tensor byte size mismatch: " + name);
+
+    // For int8 quantized tensors, the file contains: quantized_data + scale (4 bytes)
+    std::size_t expected_bytes = 0;
+    bool is_quantized = (dtype == DType::I8);
+
+    if (is_quantized) {
+      // Calculate size for shape
+      std::size_t numel = 1;
+      for (const auto& dim : shape) {
+        numel *= static_cast<std::size_t>(dim);
+      }
+      expected_bytes = numel * sizeof(std::int8_t) + sizeof(float);
+    } else {
+      Tensor temp(shape, dtype, DeviceType::CPU);
+      expected_bytes = temp.nbytes();
     }
+
+    if (bytes != expected_bytes) {
+      throw std::runtime_error("tensor byte size mismatch: " + name +
+                               " (expected " + std::to_string(expected_bytes) +
+                               ", got " + std::to_string(bytes) + ")");
+    }
+
     std::vector<std::uint8_t> buffer(static_cast<std::size_t>(bytes));
     read_exact(in, buffer.data(), buffer.size());
-    tensor.copy_from_host(buffer.data(), buffer.size());
-    result.tensors_.emplace(std::move(name), std::move(tensor));
+
+    // For int8, dequantize on load to FP16/FP32
+    if (is_quantized) {
+      // Determine target dtype based on device
+      DType target_dtype = (device == DeviceType::CUDA) ? DType::F16 : DType::F32;
+      Tensor tensor(shape, target_dtype, device);
+
+      // Extract scale from the end of buffer
+      float scale;
+      std::memcpy(&scale, buffer.data() + buffer.size() - sizeof(float), sizeof(float));
+
+      // Dequantize on CPU then transfer to target device
+      std::size_t numel = 1;
+      for (const auto& dim : shape) {
+        numel *= static_cast<std::size_t>(dim);
+      }
+
+      std::vector<float> dequantized(numel);
+      const std::int8_t* quantized = reinterpret_cast<const std::int8_t*>(buffer.data());
+
+      for (std::size_t i = 0; i < numel; ++i) {
+        dequantized[i] = static_cast<float>(quantized[i]) * scale;
+      }
+
+      // Convert to target dtype and copy to device
+      if (target_dtype == DType::F16) {
+        std::vector<float16_t> fp16_data(numel);
+        for (std::size_t i = 0; i < numel; ++i) {
+          fp16_data[i] = float_to_half(dequantized[i]);
+        }
+        tensor.copy_from_host(fp16_data.data(), fp16_data.size() * sizeof(float16_t));
+      } else {
+        tensor.copy_from_host(dequantized.data(), dequantized.size() * sizeof(float));
+      }
+
+      result.tensors_.emplace(std::move(name), std::move(tensor));
+    } else {
+      Tensor tensor(shape, dtype, device);
+      tensor.copy_from_host(buffer.data(), buffer.size());
+      result.tensors_.emplace(std::move(name), std::move(tensor));
+    }
   }
 
   return result;

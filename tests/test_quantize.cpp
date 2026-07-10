@@ -62,8 +62,13 @@ void test_matmul_int8_cpu() {
   b.copy_from_host(b_data.data(), b_data.size() * sizeof(float));
 
   Tensor b_quant({3, 2}, DType::I8, DeviceType::CPU);
+  Tensor b_scale_temp({1}, DType::F32, DeviceType::CPU);
+  op::quantize_int8(b, b_quant, b_scale_temp);
+
   Tensor b_scale({2}, DType::F32, DeviceType::CPU);
-  op::quantize_int8(b, b_quant, b_scale);
+  float scale_val = b_scale_temp.to_float_vector()[0];
+  std::vector<float> scale_data = {scale_val, scale_val};
+  b_scale.copy_from_host(scale_data.data(), scale_data.size() * sizeof(float));
 
   Tensor out_int8({2, 2}, DType::F32, DeviceType::CPU);
   op::matmul_int8(a, b_quant, b_scale, out_int8);
@@ -142,8 +147,14 @@ void test_matmul_int8_cuda() {
   b.copy_from_host(b_data.data(), b_data.size() * sizeof(float));
 
   Tensor b_quant({3, 2}, DType::I8, DeviceType::CUDA);
+  Tensor b_scale_temp({1}, DType::F32, DeviceType::CUDA);
+  op::quantize_int8(b, b_quant, b_scale_temp);
+
   Tensor b_scale({2}, DType::F32, DeviceType::CUDA);
-  op::quantize_int8(b, b_quant, b_scale);
+  std::vector<float> scale_temp = b_scale_temp.to_float_vector();
+  float scale_val = scale_temp[0];
+  std::vector<float> scale_data = {scale_val, scale_val};
+  b_scale.copy_from_host(scale_data.data(), scale_data.size() * sizeof(float));
 
   Tensor out_int8({2, 2}, DType::F32, DeviceType::CUDA);
   op::matmul_int8(a, b_quant, b_scale, out_int8);

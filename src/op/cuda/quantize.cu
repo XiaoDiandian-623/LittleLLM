@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <algorithm>
 
+using kllm::op::detail::check_cuda;
+
 namespace kllm::op::cuda {
 
 __global__ void find_max_abs_kernel(const float* input, float* partial_max, int n) {
@@ -102,7 +104,7 @@ void quantize_int8(const Tensor& input, Tensor& out_data, Tensor& out_scale) {
   }
 
   cudaFree(d_partial_max);
-  check_last_cuda_error();
+  check_cuda(cudaGetLastError());
 }
 
 void dequantize_int8(const Tensor& data, const Tensor& scale, Tensor& output) {
@@ -115,7 +117,7 @@ void dequantize_int8(const Tensor& data, const Tensor& scale, Tensor& output) {
   const int num_blocks = (n + block_size - 1) / block_size;
 
   dequantize_kernel<<<num_blocks, block_size>>>(in, s, out, n);
-  check_last_cuda_error();
+  check_cuda(cudaGetLastError());
 }
 
 void matmul_int8(const Tensor& a, const Tensor& b_quant, const Tensor& b_scale, Tensor& out) {
@@ -135,7 +137,7 @@ void matmul_int8(const Tensor& a, const Tensor& b_quant, const Tensor& b_scale, 
   dim3 grid_size((N + block_size.x - 1) / block_size.x, (M + block_size.y - 1) / block_size.y);
 
   matmul_int8_kernel<<<grid_size, block_size>>>(a_data, b_data, scale_data, out_data, M, K, N);
-  check_last_cuda_error();
+  check_cuda(cudaGetLastError());
 }
 
 }  // namespace kllm::op::cuda
