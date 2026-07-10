@@ -1,0 +1,9 @@
+build/
+build-*/
+models/
+*.kllm
+*.bin
+*.exe
+*.log
+__pycache__/
+.venv/
