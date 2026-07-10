@@ -1,10 +1,8 @@
-# KLLM
+# 一个轻量级大模型推理框架。
 
-一个轻量级大模型推理框架。
+不使用 `llama.cpp`，也不调用 Transformers 的模型前向过程。Python 仅用于模型下载、权重导出和复用 Hugging Face tokenizer，实际推理过程完全在 C++ / CUDA / CMake 项目中完成。
 
-KLLM 不使用 `llama.cpp`，也不调用 Transformers 的模型前向过程。Python 仅用于模型下载、权重导出和复用 Hugging Face tokenizer，实际推理过程完全在 C++ / CUDA / CMake 项目中完成。
-
-当前版本定位为**可读、可扩展的教学与实验框架**，而不是高性能生产级推理引擎。项目已经支持 CPU / CUDA 双后端、FP16 权重存储、KV cache、自定义 Tensor 与算子系统，适合继续扩展 FlashAttention、量化 Linear、Paged KV Cache、HTTP Server 等模块。
+当前版本定位为**可读、可扩展的实验框架**，而不是高性能生产级推理引擎。项目已经支持 CPU / CUDA 双后端、FP16 权重存储、INT8 量化权重、KV cache、自定义 Tensor 与算子系统，适合继续扩展 FlashAttention、运行时 INT8 matmul、Paged KV Cache、HTTP Server 等模块。
 
 ---
 
@@ -16,7 +14,8 @@ KLLM 不使用 `llama.cpp`，也不调用 Transformers 的模型前向过程。P
 * CPU / CUDA 双后端
 * 自定义 Tensor、算子、KV cache、采样器
 * 支持 Hugging Face Llama2 和 Qwen2 / Qwen2.5 系列 decoder-only 权重导出
-* 支持 FP16 权重存储
+* 支持 FP16 权重存储与 INT8 量化权重导出
+* INT8 权重加载时自动反量化为 FP16/FP32，节省磁盘空间 50%
 * CPU 激活使用 FP32，便于调试
 * CUDA 激活和 KV cache 使用 FP16
 * CUDA matmul 已接入 cuBLAS，可使用 FP16 activation 走 Tensor Core
@@ -27,8 +26,8 @@ KLLM 不使用 `llama.cpp`，也不调用 Transformers 的模型前向过程。P
 ## Project Structure
 
 ```text
-include/kllm/base       # Device、Tensor、FP16 转换
-include/kllm/op         # 算子接口
+include/kllm/base       # Device、Tensor、FP16 转换、量化接口
+include/kllm/op         # 算子接口 (ops.h / cpu_ops.h / cuda_ops.h)
 include/kllm/op/detail  # CPU / CUDA 算子内部 helper
 include/kllm/model      # config、weights、Llama / Qwen2 runner
 include/kllm/sampler    # top-k / top-p / greedy sampler
@@ -41,9 +40,11 @@ src/model               # .kllm 权重加载和 decoder forward
 src/sampler             # 采样实现
 
 demo/kllm_demo.cpp      # C++ token-id 推理 demo
-tests/test_ops.cpp      # CPU / CUDA 算子单元测试
+tests/test_ops.cpp      # 组合算子单元测试
+tests/test_*.cpp         # 各算子独立单元测试（共 13 个）
 
-tools/export_hf.py      # HF 权重导出为 .kllm
+tools/export_hf.py      # HF 权重导出为 .kllm（支持 f16/f32/i8）
+tools/download_model.py # HF 模型下载
 tools/chat_tokenizer.py # tokenizer + C++ demo 文本推理包装
 ```
 
@@ -135,6 +136,23 @@ bash scripts/test_cuda.sh
 
 `kllm_tests` 会始终运行 CPU 算子测试。如果构建启用了 CUDA，且运行时能够检测到 GPU，则会额外运行 CUDA 算子测试。
 
+每个算子也有独立的测试二进制，便于调试单个模块：
+
+```bash
+./build-cpu/test_embedding
+./build-cpu/test_matmul
+./build-cpu/test_add_bias
+./build-cpu/test_rms_norm
+./build-cpu/test_silu
+./build-cpu/test_rope
+./build-cpu/test_kv_cache
+./build-cpu/test_attention
+./build-cpu/test_sampler
+./build-cpu/test_half
+./build-cpu/test_quantize
+./build-cpu/test_select_last_row
+```
+
 ---
 
 ## Download and Export Models
@@ -149,7 +167,7 @@ python tools/download_model.py \
   --out-dir models/qwen2.5-0.5b-instruct
 ```
 
-### Export to `.kllm`
+### Export to `.kllm` (FP16)
 
 ```bash
 python tools/export_hf.py \
@@ -157,6 +175,17 @@ python tools/export_hf.py \
   --out models/qwen2.5-0.5b-instruct.kllm \
   --dtype f16
 ```
+
+### Export to `.kllm` (INT8)
+
+```bash
+python tools/export_hf.py \
+  --model-dir models/qwen2.5-0.5b-instruct \
+  --out models/qwen2.5-0.5b-instruct-int8.kllm \
+  --dtype i8
+```
+
+INT8 模型磁盘占用约为 FP16 的 50%，加载时自动反量化为 FP16/FP32，推理精度损失在可接受范围内。
 
 ### Download Llama2-7B
 
@@ -227,6 +256,19 @@ python tools/chat_tokenizer.py \
   --prompt "介绍一下本项目的模块划分。"
 ```
 
+INT8 模型推理：
+
+```bash
+python tools/chat_tokenizer.py \
+  --model-dir models/qwen2.5-0.5b-instruct \
+  --kllm-model models/qwen2.5-0.5b-instruct-int8.kllm \
+  --binary build-cuda/kllm_demo \
+  --device cuda \
+  --chat \
+  --prompt "你的问题" \
+  --max-new-tokens 128
+```
+
 ---
 
 ## `.kllm` File Format
@@ -251,12 +293,14 @@ tensor_count: uint32
 repeat tensor_count:
   name_len: uint32
   name: utf-8 bytes
-  dtype: uint32      # 0=f32, 1=f16, 2=i32
+  dtype: uint32      # 0=f32, 1=f16, 2=i32, 3=i8
   ndim: uint32
   dims: int64[ndim]
   nbytes: uint64
   raw tensor bytes
 ```
+
+INT8 量化 tensor 的存储格式为：`[int8 量化数据: numel × 1 byte] + [scale: 4 bytes (float32)]`。加载时框架自动将 INT8 权重反量化为 FP16（CUDA）或 FP32（CPU）。
 
 权重名沿用 Hugging Face 模型中的命名，例如：
 
@@ -279,6 +323,8 @@ lm_head.weight
 * Qwen2
 * Qwen2.5
 
+> 已通过 Qwen2.5-0.5B-Instruct 完成 CPU / CUDA / INT8 端到端正确性验证。
+
 ---
 
 ## Current Limitations
@@ -293,12 +339,12 @@ lm_head.weight
 * 不内置完整 BPE / SentencePiece tokenizer
 * 文本输入由 `tools/chat_tokenizer.py` 负责
 * CUDA matmul 已使用 cuBLAS，但 attention、top-k / top-p 采样和部分逐元素 kernel 仍是朴素实现
+* INT8 量化采用 per-tensor 量化 + 加载时反量化策略（运行时仍为 FP16/FP32 计算）
 * CUDA 激活和 KV cache 使用 FP16
 * CPU 路径仍使用 FP32，便于调试
 * 暂不支持 batch 推理
 * 暂不支持 streaming 输出
 * 暂不支持 paged KV cache
-* 暂不支持量化权重
 
 ---
 
@@ -306,12 +352,12 @@ lm_head.weight
 
 下一步可以继续完善以下模块：
 
-* 使用 Qwen2.5-0.5B 跑通 CPU / CUDA 正确性验证
 * 将 attention decode kernel 改成 block 级并行实现
 * 引入 FlashAttention 风格 attention kernel
-* 增加 weight-only int8 / int4 Linear
-* 增加完整 C++ tokenizer
-* 或接入 tokenizers C API
+* 实现运行时 INT8 matmul（保持 INT8 权重不反量化，节省运行时内存）
+* 增加 per-channel 量化（提升 INT8 精度）
+* 增加 weight-only int4 Linear
+* 增加完整 C++ tokenizer 或接入 tokenizers C API
 * 增加 streaming token 输出
 * 增加 OpenAI 风格 HTTP server
 * 增加 batch 推理
@@ -331,6 +377,7 @@ KLLM 的目标不是直接追求极致性能，而是提供一个结构清晰、
 * 实验 CPU / CUDA 双后端设计
 * 验证自定义 CUDA kernel
 * 替换 attention、linear、sampling 等关键模块
+* 实验 INT8 量化与反量化策略
 * 作为后续高性能推理框架的原型项目
 
 ---
