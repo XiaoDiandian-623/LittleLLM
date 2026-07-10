@@ -29,6 +29,7 @@ add_library(kllm_core
   src/op/cpu/rms_norm.cpp
   src/op/cpu/rope.cpp
   src/op/cpu/silu.cpp
+  src/op/cpu/quantize.cpp
   src/model/weights.cpp
   src/model/llama.cpp
   src/sampler/sampler.cpp
@@ -50,6 +51,7 @@ if(KLLM_USE_CUDA)
     src/op/cuda/rms_norm.cu
     src/op/cuda/rope.cu
     src/op/cuda/silu.cu
+    src/op/cuda/quantize.cu
   )
   target_include_directories(kllm_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   set_target_properties(kllm_core PROPERTIES
@@ -101,6 +103,9 @@ target_link_libraries(test_attention PRIVATE kllm_core)
 add_executable(test_sampler tests/test_sampler.cpp)
 target_link_libraries(test_sampler PRIVATE kllm_core)
 
+add_executable(test_quantize tests/test_quantize.cpp)
+target_link_libraries(test_quantize PRIVATE kllm_core)
+
 enable_testing()
 add_test(NAME kllm_tests COMMAND kllm_tests)
 add_test(NAME test_half COMMAND test_half)
@@ -114,3 +119,4 @@ add_test(NAME test_rope COMMAND test_rope)
 add_test(NAME test_kv_cache COMMAND test_kv_cache)
 add_test(NAME test_attention COMMAND test_attention)
 add_test(NAME test_sampler COMMAND test_sampler)
+add_test(NAME test_quantize COMMAND test_quantize)

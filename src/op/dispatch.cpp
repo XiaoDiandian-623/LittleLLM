@@ -169,5 +169,41 @@ void attention(
   cpu_attention(q, k_cache, v_cache, out, past_len, total_len, num_heads, num_kv_heads, head_dim);
 }
 
+void quantize_int8(const Tensor& input, Tensor& out_data, Tensor& out_scale) {
+  if (input.device() == DeviceType::CUDA) {
+#if KLLM_USE_CUDA
+    cuda::quantize_int8(input, out_data, out_scale);
+    return;
+#else
+    cuda_not_compiled();
+#endif
+  }
+  cpu::quantize_int8(input, out_data, out_scale);
+}
+
+void dequantize_int8(const Tensor& data, const Tensor& scale, Tensor& output) {
+  if (data.device() == DeviceType::CUDA) {
+#if KLLM_USE_CUDA
+    cuda::dequantize_int8(data, scale, output);
+    return;
+#else
+    cuda_not_compiled();
+#endif
+  }
+  cpu::dequantize_int8(data, scale, output);
+}
+
+void matmul_int8(const Tensor& a, const Tensor& b_quant, const Tensor& b_scale, Tensor& out) {
+  if (a.device() == DeviceType::CUDA) {
+#if KLLM_USE_CUDA
+    cuda::matmul_int8(a, b_quant, b_scale, out);
+    return;
+#else
+    cuda_not_compiled();
+#endif
+  }
+  cpu::matmul_int8(a, b_quant, b_scale, out);
+}
+
 }  // namespace kllm::op
 

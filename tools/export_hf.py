@@ -10,13 +10,14 @@ from typing import Dict, Iterable, List, Tuple
 DTYPE_F32 = 0
 DTYPE_F16 = 1
 DTYPE_I32 = 2
+DTYPE_I8 = 3
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Export a HF Llama/Qwen2 model to .kllm.")
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--dtype", choices=["f16", "f32"], default="f16")
+    parser.add_argument("--dtype", choices=["f16", "f32", "i8"], default="f16")
     parser.add_argument("--include-bin", action="store_true", help="Allow pytorch_model*.bin checkpoints.")
     return parser.parse_args()
 
@@ -76,9 +77,23 @@ def iter_tensors(files: Iterable[str]):
 
 def convert_tensor(tensor, dtype: str) -> Tuple[int, Tuple[int, ...], bytes]:
     import torch
+    import numpy as np
 
     tensor = tensor.detach().cpu().contiguous()
     if tensor.dtype in (torch.float16, torch.float32, torch.bfloat16, torch.float64):
+        if dtype == "i8":
+            tensor_fp32 = tensor.to(torch.float32).numpy()
+            max_val = np.abs(tensor_fp32).max()
+            scale = max_val / 127.0
+            if scale > 0:
+                quantized = np.round(tensor_fp32 / scale).astype(np.int8)
+            else:
+                quantized = np.zeros_like(tensor_fp32, dtype=np.int8)
+
+            scale_tensor = np.array([scale], dtype=np.float32)
+            data = quantized.tobytes(order="C") + scale_tensor.tobytes(order="C")
+            return DTYPE_I8, tuple(tensor.shape), data
+
         if dtype == "f16":
             tensor = tensor.to(torch.float16)
             return DTYPE_F16, tuple(tensor.shape), tensor.numpy().tobytes(order="C")

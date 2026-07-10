@@ -26,5 +26,11 @@ void cuda_attention(
     int num_kv_heads,
     int head_dim);
 
+namespace cuda {
+void quantize_int8(const Tensor& input, Tensor& out_data, Tensor& out_scale);
+void dequantize_int8(const Tensor& data, const Tensor& scale, Tensor& output);
+void matmul_int8(const Tensor& a, const Tensor& b_quant, const Tensor& b_scale, Tensor& out);
+}  // namespace cuda
+
 }  // namespace kllm::op
 

@@ -14,6 +14,7 @@ enum class DType : std::uint32_t {
   F32 = 0,
   F16 = 1,
   I32 = 2,
+  I8 = 3,
 };
 
 std::size_t dtype_size(DType dtype);

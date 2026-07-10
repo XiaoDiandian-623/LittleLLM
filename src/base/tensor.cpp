@@ -43,6 +43,8 @@ std::size_t dtype_size(DType dtype) {
       return sizeof(float16_t);
     case DType::I32:
       return sizeof(std::int32_t);
+    case DType::I8:
+      return sizeof(std::int8_t);
   }
   throw std::runtime_error("unknown dtype");
 }
@@ -55,6 +57,8 @@ std::string dtype_name(DType dtype) {
       return "f16";
     case DType::I32:
       return "i32";
+    case DType::I8:
+      return "i8";
   }
   return "unknown";
 }
@@ -207,6 +211,15 @@ std::vector<float> Tensor::to_float_vector() const {
   if (dtype_ == DType::I32) {
     std::vector<std::int32_t> tmp(numel_);
     copy_to_host(tmp.data(), tmp.size() * sizeof(std::int32_t));
+    for (std::size_t i = 0; i < tmp.size(); ++i) {
+      result[i] = static_cast<float>(tmp[i]);
+    }
+    return result;
+  }
+
+  if (dtype_ == DType::I8) {
+    std::vector<std::int8_t> tmp(numel_);
+    copy_to_host(tmp.data(), tmp.size() * sizeof(std::int8_t));
     for (std::size_t i = 0; i < tmp.size(); ++i) {
       result[i] = static_cast<float>(tmp[i]);
     }
